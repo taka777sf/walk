@@ -100,6 +100,14 @@ textarea{width:100%;min-height:70px;font-size:11px;font-family:ui-monospace,mono
 .f input,.f select{font-family:var(--f-num);font-size:20px;font-weight:600;padding:6px 10px;width:100%}
 .chips{display:flex;gap:6px;flex-wrap:wrap}
 .chips button{border:1px solid var(--line);background:var(--bg);border-radius:14px;padding:3px 10px;font-size:12px;font-family:var(--f-num);font-weight:600}
+.wt{max-width:50%}
+.walkrows{display:flex;flex-direction:column;gap:10px}
+.wrow{display:grid;grid-template-columns:1fr 1fr 1fr 34px;gap:8px;align-items:end;padding-bottom:8px;border-bottom:1px dashed var(--line)}
+.wrow .f input,.wrow .f select{font-size:18px;padding:6px 8px}
+.wrow .rm{height:38px;border:1px solid var(--line);background:var(--bg);border-radius:8px;color:var(--muted);font-size:16px}
+.wrow .wk{grid-column:1/-1;font-family:var(--f-num);font-size:12.5px;color:var(--muted);margin-top:-2px}
+.wrow .wk b{color:var(--accent);font-weight:600}
+.btn.add{align-self:flex-start;border-style:dashed}
 .result{display:grid;grid-template-columns:repeat(3,1fr);background:var(--accent-soft);border-radius:10px;padding:10px 6px;text-align:center}
 .result span{display:block;font-size:10.5px;color:var(--muted)}
 .result strong{font-family:var(--f-num);font-size:24px;font-weight:600}
@@ -162,15 +170,11 @@ textarea{width:100%;min-height:70px;font-size:11px;font-family:ui-monospace,mono
 <div class="scrim" id="scrim" hidden>
   <div class="sheet" role="dialog" aria-labelledby="sheetTitle">
     <h2 id="sheetTitle"></h2>
-    <div class="fields">
-      <label class="f"><span>時間（分）</span><input id="eMin" type="number" inputmode="numeric" min="0" step="1"></label>
-      <label class="f"><span>時速（km/h）</span><input id="eSpeed" type="number" inputmode="decimal" min="0" step="0.1"></label>
-      <label class="f"><span>体重（kg）</span><input id="eWeight" type="number" inputmode="decimal" min="0" step="0.1"></label>
-      <label class="f"><span>傾斜角度（°）</span><select id="eAngle"></select></label>
-    </div>
-    <div class="chips" id="minChips"></div>
+    <label class="f wt"><span>体重（kg）</span><input id="eWeight" type="number" inputmode="decimal" min="0" step="0.1"></label>
+    <div id="walkRows" class="walkrows"></div>
+    <button class="btn add" id="addRow">＋ 1回追加</button>
     <div class="result">
-      <div><span>METs</span><strong id="rMets">–</strong></div>
+      <div><span>合計時間</span><strong id="rMin">–</strong></div>
       <div class="k"><span>消費kcal</span><strong id="rKcal">–</strong></div>
       <div><span>脂肪換算</span><strong id="rFat">–</strong></div>
     </div>
@@ -192,21 +196,28 @@ const fmt=(n,d=0)=>n.toLocaleString('ja-JP',{minimumFractionDigits:d,maximumFrac
 function defaults(){return{settings:{angle:8,kcalPerKg:7200,net:false,speed:5},entries:{},sample:false}}
 function makeSample(){
   const s=defaults();s.sample=true;const t=new Date();let w=72.4;
+  const pat=[[{min:45,speed:5,angle:8}],[{min:15,speed:4,angle:2},{min:40,speed:5,angle:8}],[{min:30,speed:4.5,angle:0},{min:15,speed:4,angle:0},{min:20,speed:2.5,angle:9}]];
   for(let i=20;i>=1;i--){const d=new Date(t);d.setDate(t.getDate()-i);
     if(i%4===0)continue; w-=0.06;
-    s.entries[ymd(d)]={min:[30,40,45,60][i%4],speed:[4.5,5,5.5,5][i%4],weight:+w.toFixed(1),angle:8};}
+    s.entries[ymd(d)]={weight:+w.toFixed(1),walks:pat[i%3].map(x=>({...x}))};}
   return s;}
+/* 旧形式（1日1件）を複数回形式に変換 */
+function norm(e,defAngle){if(!e)return null;if(Array.isArray(e.walks))return e;
+  return{weight:+e.weight||0,walks:[{min:+e.min||0,speed:+e.speed||0,angle:e.angle??defAngle}]}}
+function normAll(s){for(const k in s.entries){const n=norm(s.entries[k],s.settings.angle);if(n&&n.walks.length)s.entries[k]=n;else delete s.entries[k]}}
 let S;
 try{S=JSON.parse(localStorage.getItem(KEY))||makeSample()}catch(e){S=makeSample()}
-S.settings=Object.assign(defaults().settings,S.settings||{});S.entries=S.entries||{};
+S.settings=Object.assign(defaults().settings,S.settings||{});S.entries=S.entries||{};normAll(S);
 function save(){try{localStorage.setItem(KEY,JSON.stringify(S))}catch(e){}}
 
 /* --- METs math --- */
 function calcMets(speed,angle){const v=speed*1000/60,g=Math.tan(angle*Math.PI/180);return(3.5+0.1*v+1.8*v*g)/3.5}
-function calcKcal(e){if(!e||!e.min||!e.speed||!e.weight)return 0;
-  const m=calcMets(e.speed,e.angle??S.settings.angle);return Math.max(0,(S.settings.net?m-1:m))*e.weight*(e.min/60)*1.05}
+function walkKcal(w,weight){if(!w||!w.min||!w.speed||!weight)return 0;
+  const m=calcMets(w.speed,w.angle??S.settings.angle);return Math.max(0,(S.settings.net?m-1:m))*weight*(w.min/60)*1.05}
+function calcKcal(e){if(!e)return 0;return e.walks.reduce((a,w)=>a+walkKcal(w,e.weight),0)}
+function dayMin(e){return e?e.walks.reduce((a,w)=>a+(+w.min||0),0):0}
 function agg(days){let min=0,kcal=0,first=null,last=null,n=0;
-  for(const k of days){const e=S.entries[k];if(!e)continue;n++;min+=+e.min||0;kcal+=calcKcal(e);
+  for(const k of days){const e=S.entries[k];if(!e)continue;n++;min+=dayMin(e);kcal+=calcKcal(e);
     if(e.weight){if(first===null)first=e.weight;last=e.weight}}
   return{min,kcal,loss:kcal/S.settings.kcalPerKg,real:(first!==null&&last!==null&&first!==last)?last-first:null,n}}
 
@@ -235,7 +246,7 @@ function render(){
     for(let i=0;i<7;i++){const k=ymd(cur);days.push(k);const e=S.entries[k],kc=calcKcal(e);
       const cls=['day',cur.getMonth()!==mo?'out':'',k===todayStr?'today':''].join(' ');
       const bg=kc?`background:rgba(var(--heat),${(0.06+0.22*kc/maxK).toFixed(3)})`:'';
-      cells+=`<button class="${cls}" style="${bg}" data-k="${k}" aria-label="${k}"><span class="d">${cur.getDate()}</span>${e?`<span class="m">${e.min}<i>分</i></span><span class="k">${fmt(kc)}<small>kcal</small></span><span class="w">${e.weight||''}${e.weight?'kg':''}</span>`:''}</button>`;
+      cells+=`<button class="${cls}" style="${bg}" data-k="${k}" aria-label="${k}"><span class="d">${cur.getDate()}</span>${e?`<span class="m">${dayMin(e)}<i>分</i></span><span class="k">${fmt(kc)}<small>kcal</small></span><span class="w">${e.weight||''}${e.weight?'kg':''}</span>`:''}</button>`;
       cur.setDate(cur.getDate()+1);}
     const W=agg(days);
     html+=`<div class="week-block"><div class="week">${cells}</div>
@@ -249,7 +260,7 @@ function render(){
 }
 
 /* --- settings --- */
-const angleOpts=v=>Array.from({length:31},(_,i)=>i*0.5).map(x=>`<option value="${x}" ${x==v?'selected':''}>${x}°（${fmt(Math.tan(x*Math.PI/180)*100,1)}%）</option>`).join('');
+const angleOpts=(v,short)=>Array.from({length:31},(_,i)=>i*0.5).map(x=>`<option value="${x}" ${x==v?'selected':''}>${x}°${short?'':`（${fmt(Math.tan(x*Math.PI/180)*100,1)}%）`}</option>`).join('');
 function renderSettings(){
   $('sAngle').innerHTML=angleOpts(S.settings.angle);
   $('sAngleInfo').textContent='トレッドミル表示の％ではなく角度で指定';
@@ -265,30 +276,46 @@ $('sSpeed').onchange=e=>{S.settings.speed=+e.target.value;save();render()};
 let editing=null;
 function lastWeight(before){const ks=Object.keys(S.entries).filter(k=>k<=before&&S.entries[k].weight).sort();
   return ks.length?S.entries[ks.at(-1)].weight:''}
+const newWalk=()=>({min:'',speed:S.settings.speed,angle:S.settings.angle});
+function rowHtml(w,i){return `<div class="wrow">
+  <label class="f"><span>${i+1}回目・分</span><input id="wMin${i}" class="wMin" type="number" inputmode="numeric" min="0" step="1" value="${w.min||''}"></label>
+  <label class="f"><span>時速km</span><input id="wSpd${i}" class="wSpd" type="number" inputmode="decimal" min="0" step="0.1" value="${w.speed||''}"></label>
+  <label class="f"><span>傾斜</span><select id="wAng${i}" class="wAng">${angleOpts(w.angle,true)}</select></label>
+  <button class="rm" data-rm="${i}" aria-label="${i+1}回目を削除">×</button>
+  <div class="wk" id="wk${i}"></div></div>`}
+function renderRows(rows){$('walkRows').innerHTML=rows.map(rowHtml).join('');live()}
+function readRows(){return[...document.querySelectorAll('#walkRows .wrow')].map(r=>({
+  min:+r.querySelector('.wMin').value||0,speed:+r.querySelector('.wSpd').value||0,angle:+r.querySelector('.wAng').value}))}
 function openSheet(k){
   editing=k;const e=S.entries[k],d=new Date(k+'T00:00');
   $('sheetTitle').textContent=`${d.getMonth()+1}月${d.getDate()}日（${'日月火水木金土'[d.getDay()]}）`;
-  $('eMin').value=e?.min??'';$('eSpeed').value=e?.speed??S.settings.speed;
   $('eWeight').value=e?.weight??lastWeight(k);
-  $('eAngle').innerHTML=angleOpts(e?.angle??S.settings.angle);
-  $('eDel').hidden=!e;$('scrim').hidden=false;live();
-  setTimeout(()=>$('eMin').focus(),50);
+  renderRows(e?e.walks.map(w=>({...w})):[newWalk()]);
+  $('eDel').hidden=!e;$('scrim').hidden=false;
+  setTimeout(()=>{const i=document.querySelectorAll('.wMin');i[i.length-1]?.focus()},50);
 }
-function readForm(){return{min:+$('eMin').value||0,speed:+$('eSpeed').value||0,weight:+$('eWeight').value||0,angle:+$('eAngle').value}}
-function live(){const e=readForm();
-  $('rMets').textContent=e.speed?fmt(calcMets(e.speed,e.angle),1):'–';
-  const k=calcKcal(e);$('rKcal').textContent=k?fmt(k):'–';
-  $('rFat').textContent=k?fmt(k/S.settings.kcalPerKg*1000)+'g':'–';}
-['eMin','eSpeed','eWeight','eAngle'].forEach(id=>$(id).addEventListener('input',live));
-$('minChips').innerHTML=[20,30,45,60,90].map(m=>`<button data-m="${m}">${m}分</button>`).join('');
-$('minChips').onclick=ev=>{const m=ev.target.dataset.m;if(m){$('eMin').value=m;live()}};
+function live(){const weight=+$('eWeight').value||0,rows=readRows();let tk=0,tm=0;
+  rows.forEach((w,i)=>{const k=walkKcal(w,weight);tk+=k;tm+=w.min;
+    $('wk'+i).innerHTML=w.speed?`${fmt(calcMets(w.speed,w.angle),1)} METs${k?` ・ <b>${fmt(k)}kcal</b>`:''}`:'';});
+  $('rMin').textContent=tm?tm+'分':'–';
+  $('rKcal').textContent=tk?fmt(tk):'–';
+  $('rFat').textContent=tk?fmt(tk/S.settings.kcalPerKg*1000)+'g':'–';}
+$('eWeight').addEventListener('input',live);
+$('walkRows').addEventListener('input',live);
+$('walkRows').addEventListener('change',live);
+$('walkRows').addEventListener('click',ev=>{const i=ev.target.dataset.rm;if(i===undefined)return;
+  const rows=readRows();rows.splice(+i,1);renderRows(rows.length?rows:[newWalk()])});
+$('addRow').onclick=()=>{const rows=readRows();const last=rows[rows.length-1];
+  rows.push(last?{min:'',speed:last.speed,angle:last.angle}:newWalk());renderRows(rows);
+  const i=document.querySelectorAll('.wMin');i[i.length-1].focus()};
 function close(){$('scrim').hidden=true;editing=null}
 $('eCancel').onclick=close;
 $('scrim').onclick=ev=>{if(ev.target===$('scrim'))close()};
-$('eSave').onclick=()=>{const e=readForm();
-  if(!e.min){toast('時間を入力してください');return}
-  if(!e.speed||!e.weight){toast('時速と体重を入力してください');return}
-  dropSample();S.entries[editing]=e;save();close();render();toast('保存しました')};
+$('eSave').onclick=()=>{const weight=+$('eWeight').value||0,walks=readRows().filter(w=>w.min>0);
+  if(!walks.length){toast('時間を入力してください');return}
+  if(walks.some(w=>!w.speed)){toast('時速を入力してください');return}
+  if(!weight){toast('体重を入力してください');return}
+  dropSample();S.entries[editing]={weight,walks};save();close();render();toast('保存しました')};
 $('eDel').onclick=()=>{delete S.entries[editing];save();close();render();toast('削除しました')};
 $('weeks').onclick=ev=>{const b=ev.target.closest('.day');if(b)openSheet(b.dataset.k)};
 
@@ -301,7 +328,7 @@ $('next').onclick=()=>{view.setMonth(view.getMonth()+1);render()};
 $('copyJson').onclick=()=>{const t=JSON.stringify(S);
   navigator.clipboard.writeText(t).then(()=>toast('コピーしました')).catch(()=>{$('importBox').value=t;$('importBox').select();toast('選択した文字をコピーしてください')})};
 $('doImport').onclick=()=>{try{const d=JSON.parse($('importBox').value);
-  if(!d.entries)throw 0;S=Object.assign(defaults(),d);S.settings=Object.assign(defaults().settings,d.settings||{});S.sample=false;
+  if(!d.entries)throw 0;S=Object.assign(defaults(),d);S.settings=Object.assign(defaults().settings,d.settings||{});S.sample=false;normAll(S);
   save();renderSettings();render();$('importBox').value='';toast('復元しました')}catch(e){toast('JSONの形式が正しくありません')}};
 
 let tt;function toast(m){const t=$('toast');t.textContent=m;t.hidden=false;clearTimeout(tt);tt=setTimeout(()=>t.hidden=true,1800)}
